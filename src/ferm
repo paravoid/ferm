@@ -136,7 +136,7 @@ use vars qw(%proto_defs %match_defs %target_defs);
 
 # prototype declarations
 sub open_script($);
-sub resolve(\@$);
+sub resolve($\@$);
 sub enter($$);
 sub rollback();
 sub execute_fast($);
@@ -489,10 +489,10 @@ sub address_magic {
     } elsif (ref $value) {
         my $deferred = get_deferred_function($value);
         if ($deferred eq 'resolve') {
-            my $type = $value->[1] || ($domain eq 'ip6' ? 'AAAA' : 'A');
+            my $type = $value->[1];
             error('String expected') if ref $type;
             my @hosts = to_array($value->[0]);
-            @ips = resolve(@hosts, $type);
+            @ips = resolve($domain, @hosts, $type);
         } elsif ($deferred eq 'ipfilter') {
             @ips = ipfilter($domain, to_array($value->[0]));
         } else {
@@ -1202,9 +1202,12 @@ sub pick_resolver() {
     return $resolver;
 }
 
-sub resolve(\@$) {
-    my ($names, $type) = @_;
+sub resolve($\@$) {
+    my ($domain, $names, $type) = @_;
     my $resolver = pick_resolver();
+
+    $type = ($domain eq 'ip6') ? 'AAAA' : 'A'
+        unless $type;
 
     my @result;
     foreach my $hostname (@$names) {
@@ -1234,9 +1237,8 @@ sub resolve(\@$) {
         }
     }
 
-    # NS/MX records return host names; resolve these again in the
-    # second pass (IPv4 only currently)
-    @result = resolve(@result, 'A')
+    # NS/MX records return host names; resolve these again in the second pass
+    @result = resolve($domain, @result, undef)
       if $type eq 'NS' or $type eq 'MX';
 
     return @result;
