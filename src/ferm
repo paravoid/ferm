@@ -493,6 +493,8 @@ sub address_magic {
             error('String expected') if ref $type;
             my @hosts = to_array($value->[0]);
             @ips = resolve(@hosts, $type);
+        } elsif ($deferred eq 'ipfilter') {
+            @ips = ipfilter($domain, to_array($value->[0]));
         } else {
             die;
         }
@@ -1442,10 +1444,7 @@ sub getvalues {
         } elsif ($token eq '@ipfilter') {
             my @params = get_function_params();
             error('Usage: @ipfilter((ip1 ip2 ...))') unless @params == 1;
-            my $domain = $stack[0]{auto}{DOMAIN};
-            error('No domain specified') unless defined $domain;
-            my @ips = ipfilter($domain, to_array($params[0]));
-            return \@ips;
+            return defer(\@params, 'ipfilter');
         } else {
             error("unknown ferm built-in function");
         }
