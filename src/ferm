@@ -487,7 +487,15 @@ sub address_magic {
         @ips = @$value;
         $negated = 1;
     } elsif (ref $value) {
-        die;
+        my $deferred = get_deferred_function($value);
+        if ($deferred eq 'resolve') {
+            my $type = $value->[1] || ($domain eq 'ip6' ? 'AAAA' : 'A');
+            error('String expected') if ref $type;
+            my @hosts = to_array($value->[0]);
+            @ips = resolve(@hosts, $type);
+        } else {
+            die;
+        }
     } else {
         @ips = ($value);
     }
@@ -902,11 +910,29 @@ sub prepare_tokens() {
     return 1;
 }
 
+sub defer($$) {
+    my ($ref, $type) = @_;
+    return bless $ref, "dfrd:$type";
+}
+
+sub get_deferred_function($) {
+    my $token = shift;
+    my $ref = ref $token;
+    if (ref $token && (ref $token) =~ /^dfrd:(.+)/) {
+        return $1;
+    } else {
+        return undef;
+    }
+}
+
 sub handle_special_token($) {
     my $token = shift;
     die unless ref $token;
     if (ref $token eq 'line') {
         $script->{line} = $$token;
+        return undef;
+    } elsif (get_deferred_function($token)) {
+        return $token;
     } else {
         die;
     }
@@ -915,7 +941,11 @@ sub handle_special_token($) {
 sub handle_special_tokens() {
     my $tokens = $script->{tokens};
     while (@$tokens > 0 and ref $tokens->[0]) {
-        handle_special_token(shift @$tokens);
+        unless (handle_special_token($tokens->[0])) {
+            shift @$tokens;
+        } else {
+            last;
+        }
     }
 }
 
@@ -1248,6 +1278,8 @@ sub getvalues {
                 push @wordlist, $token;
             } elsif (ref $token eq 'ARRAY') {
                 push @wordlist, @$token;
+            } elsif (get_deferred_function($token)) {
+                push @wordlist, $token;
             } else {
                 error('unknown token type');
             }
@@ -1327,16 +1359,7 @@ sub getvalues {
     } elsif ($token eq ')' and not $options{parenthesis_allowed}) {
         error('Syntax error');
     } elsif ($token =~ /^@/) {
-        if ($token eq '@resolve') {
-            my @params = get_function_params();
-            error('Usage: @resolve((hostname ...), [type])')
-              unless @params == 1 or @params == 2;
-            my $type = $params[1] || 'A';
-            error('String expected') if ref $type;
-            @params = to_array($params[0]);
-            my @result = resolve(@params, $type);
-            return @result == 1 ? $result[0] : \@result;
-        } elsif ($token eq '@defined') {
+        if ($token eq '@defined') {
             expect_token('(', 'function name must be followed by "()"');
             my $type = require_next_token();
             if ($type eq '$') {
@@ -1411,6 +1434,11 @@ sub getvalues {
                 glob($path);
             } to_array($params[0]);
             return @result == 1 ? $result[0] : \@result;
+        } elsif ($token eq '@resolve') {
+            my @params = get_function_params();
+            error('Usage: @resolve((hostname ...), [type])')
+              unless @params == 1 or @params == 2;
+            return defer(\@params, 'resolve');
         } elsif ($token eq '@ipfilter') {
             my @params = get_function_params();
             error('Usage: @ipfilter((ip1 ip2 ...))') unless @params == 1;
@@ -1517,7 +1545,7 @@ sub to_array($) {
     my $value = shift;
     die unless wantarray;
     die if @_;
-    unless (ref $value) {
+    if (!ref $value || get_deferred_function($value)) {
         return $value;
     } elsif (ref $value eq 'ARRAY') {
         return @$value;
